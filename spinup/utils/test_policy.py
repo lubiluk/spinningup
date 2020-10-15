@@ -4,6 +4,7 @@ import os
 import os.path as osp
 import tensorflow as tf
 import torch
+import numpy as np
 from spinup import EpochLogger
 from spinup.utils.logx import restore_tf_graph
 
@@ -96,6 +97,7 @@ def load_pytorch_policy(fpath, itr, deterministic=False):
     print('\n\nLoading from %s.\n\n'%fname)
 
     model = torch.load(fname)
+    model.eval()
 
     # make function for producing an action given a single state
     def get_action(x):
@@ -114,8 +116,17 @@ def run_policy(env, get_action, max_ep_len=None, num_episodes=100, render=True):
         "and we can't run the agent in it. :( \n\n Check out the readthedocs " + \
         "page on Experiment Outputs for how to handle this situation."
 
+    goal_env = hasattr(env, 'goal')
+
+    def cat_obs(o):
+        return np.concatenate([o['observation'], o['desired_goal']], axis=-1)
+
     logger = EpochLogger()
     o, r, d, ep_ret, ep_len, n = env.reset(), 0, False, 0, 0, 0
+
+    if goal_env:
+        o = cat_obs(o)
+
     while n < num_episodes:
         if render:
             env.render()
@@ -126,10 +137,15 @@ def run_policy(env, get_action, max_ep_len=None, num_episodes=100, render=True):
         ep_ret += r
         ep_len += 1
 
+        if goal_env:
+            o = cat_obs(o)
+
         if d or (ep_len == max_ep_len):
             logger.store(EpRet=ep_ret, EpLen=ep_len)
             print('Episode %d \t EpRet %.3f \t EpLen %d'%(n, ep_ret, ep_len))
             o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
+            if goal_env:
+                o = cat_obs(o)
             n += 1
 
     logger.log_tabular('EpRet', with_min_and_max=True)
