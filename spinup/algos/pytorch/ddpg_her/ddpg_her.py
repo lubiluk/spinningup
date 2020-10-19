@@ -67,7 +67,8 @@ def ddpg_her(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
              steps_per_epoch=4000, epochs=100, replay_size=int(1e6), gamma=0.99,
              polyak=0.995, pi_lr=1e-3, q_lr=1e-3, batch_size=100, start_steps=10000,
              update_after=1000, update_every=50, act_noise=0.1, num_test_episodes=10,
-             max_ep_len=1000, logger_kwargs=dict(), save_freq=1, num_additional_goals=1):
+             max_ep_len=1000, logger_kwargs=dict(), save_freq=1, 
+             num_additional_goals=1, goal_selection_strategy='final'):
     """
     Deep Deterministic Policy Gradient (DDPG) with Hindsight Experience Repley (HER)
 
@@ -151,6 +152,9 @@ def ddpg_her(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             the current policy and value function.
 
         num_additional_goals (int): Number of additional HER goals for replay.
+
+        goal_selection_strategy (final, future, episode, random): Goal selection
+            method for HER goal generation.
 
     """
 
@@ -280,15 +284,32 @@ def ddpg_her(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
                 ep_len += 1
             logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
 
-    def generate_additional_experience(env, ep_start_ptr, ep_len, replay_buffer, num=1):
-        final = replay_buffer.get_row(ep_start_ptr + ep_len - 1)
+    def generate_additional_experience(env, ep_start_ptr, ep_len, replay_buffer, num=1, selection_strategy='final'):
+        ep_end = ep_start_ptr + ep_len
 
-        for i in range(ep_start_ptr, ep_start_ptr + ep_len):
-            data = replay_buffer.get_row(i)
-            rew = env.compute_reward(data['agoal'], final['agoal'], data['info'])
-            replay_buffer.store(data['obs'], data['act'], rew, data['obs2'],
-                                data['done'], final['agoal'], final['agoal'],
-                                data['info'])
+        for idx in range(ep_start_ptr, ep_end):
+            data = replay_buffer.get_row(idx)
+
+            for _ in range(num):
+                if selection_strategy == 'final':
+                    selected_idx = ep_end - 1
+                elif selection_strategy == 'future':
+                    # We cannot sample a goal from the future in the last step of an episode
+                    if idx == ep_end - 1:
+                        break
+                    selected_idx = np.random.choice(np.arange(idx + 1, ep_end))
+                elif selection_strategy == 'episode':
+                    selected_idx = np.random.choice(np.arange(ep_end))
+                elif selection_strategy == 'random':
+                    selected_idx = np.random.choice(np.arange(replay_buffer.size))
+                else:
+                    raise ValueError(f"Unsupported selection_strategy: {selection_strategy}")
+
+                selected = replay_buffer.get_row(selected_idx)
+                rew = env.compute_reward(data['agoal'], selected['agoal'], data['info'])
+                replay_buffer.store(data['obs'], data['act'], rew, data['obs2'],
+                                    False, selected['agoal'], selected['agoal'],
+                                    data['info'])
 
     # Prepare for interaction with environment
     total_steps = steps_per_epoch * epochs
@@ -336,8 +357,9 @@ def ddpg_her(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
         if d or (ep_len == max_ep_len):
             logger.store(EpRet=ep_ret, EpLen=ep_len)
             generate_additional_experience(env, ep_start_ptr=ep_start_ptr, ep_len=ep_len,
-                                           replay_buffer=replay_buffer, num=num_additional_goals)
-            ep_start_ptr += ep_len
+                                           replay_buffer=replay_buffer, num=num_additional_goals,
+                                           selection_strategy=goal_selection_strategy)
+            ep_start_ptr = replay_buffer.size
             o_dict, ep_ret, ep_len = env.reset(), 0, 0
             o = o_dict["observation"]
             dg = o_dict["desired_goal"]
