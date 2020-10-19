@@ -52,15 +52,20 @@ class ReplayBuffer:
                     agoal=self.agoal_buf[idxs],
                     info=self.info_buf[idxs])
 
-    def get_row(self, idx):
-        return dict(obs=self.obs_buf[idx],
-                    obs2=self.obs2_buf[idx],
-                    act=self.act_buf[idx],
-                    rew=self.rew_buf[idx],
-                    done=self.done_buf[idx],
-                    dgoal=self.dgoal_buf[idx],
-                    agoal=self.agoal_buf[idx],
-                    info=self.info_buf[idx])
+    def get_episode(self, ep_start_ptr, ep_len):
+        idxs = np.arange(ep_start_ptr, min(ep_start_ptr + ep_len, self.size))
+
+        if len(idxs) < ep_len:
+            idxs = np.contatenate([idxs, np.arange((ep_start_ptr + ep_len) % self.size)])
+
+        return dict(obs=self.obs_buf[idxs],
+                    obs2=self.obs2_buf[idxs],
+                    act=self.act_buf[idxs],
+                    rew=self.rew_buf[idxs],
+                    done=self.done_buf[idxs],
+                    dgoal=self.dgoal_buf[idxs],
+                    agoal=self.agoal_buf[idxs],
+                    info=self.info_buf[idxs])
 
 
 def ddpg_her(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
@@ -285,37 +290,38 @@ def ddpg_her(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
 
     def generate_additional_experience(env, ep_start_ptr, ep_len, replay_buffer, num=1, selection_strategy='final'):
-        ep_end = ep_start_ptr + ep_len
+        ep = replay_buffer.get_episode(ep_start_ptr, ep_len)
+        ep_end = len(ep['obs'])
 
-        for idx in range(ep_start_ptr, ep_end):
-            data = replay_buffer.get_row(idx)
+        for idx in range(ep_end):
+            obs = ep['obs'][idx]
+            act = ep['act'][idx]
+            obs2 = ep['obs2'][idx]
+            agoal = ep['agoal'][idx]
+            info = ep['info'][idx]
 
             for _ in range(num):
                 if selection_strategy == 'final':
-                    selected_idx = ep_end - 1
+                    sel_idx = -1
                 elif selection_strategy == 'future':
                     # We cannot sample a goal from the future in the last step of an episode
                     if idx == ep_end - 1:
                         break
-                    selected_idx = np.random.choice(np.arange(idx + 1, ep_end))
+                    sel_idx = np.random.choice(np.arange(idx + 1, ep_end))
                 elif selection_strategy == 'episode':
-                    selected_idx = np.random.choice(np.arange(ep_end))
-                elif selection_strategy == 'random':
-                    selected_idx = np.random.choice(np.arange(replay_buffer.size))
+                    sel_idx = np.random.choice(np.arange(ep_end))
                 else:
                     raise ValueError(f"Unsupported selection_strategy: {selection_strategy}")
 
-                selected = replay_buffer.get_row(selected_idx)
-                rew = env.compute_reward(data['agoal'], selected['agoal'], data['info'])
-                replay_buffer.store(data['obs'], data['act'], rew, data['obs2'],
-                                    False, selected['agoal'], selected['agoal'],
-                                    data['info'])
+                sel_agoal = ep['agoal'][sel_idx]
+                rew = env.compute_reward(agoal, sel_agoal, info)
+                replay_buffer.store(obs, act, rew, obs2, False, sel_agoal, agoal, info)
 
     # Prepare for interaction with environment
     total_steps = steps_per_epoch * epochs
     start_time = time.time()
     o_dict, ep_ret, ep_len = env.reset(), 0, 0
-    ep_start_ptr = 0
+    ep_start_ptr = replay_buffer.ptr
 
     o = o_dict["observation"]
     dg = o_dict["desired_goal"]
@@ -359,7 +365,7 @@ def ddpg_her(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             generate_additional_experience(env, ep_start_ptr=ep_start_ptr, ep_len=ep_len,
                                            replay_buffer=replay_buffer, num=num_additional_goals,
                                            selection_strategy=goal_selection_strategy)
-            ep_start_ptr = replay_buffer.size
+            ep_start_ptr = replay_buffer.ptr
             o_dict, ep_ret, ep_len = env.reset(), 0, 0
             o = o_dict["observation"]
             dg = o_dict["desired_goal"]
