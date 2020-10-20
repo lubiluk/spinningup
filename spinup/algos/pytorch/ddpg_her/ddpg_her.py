@@ -56,7 +56,7 @@ class ReplayBuffer:
         idxs = np.arange(ep_start_ptr, min(ep_start_ptr + ep_len, self.size))
 
         if len(idxs) < ep_len:
-            idxs = np.contatenate([idxs, np.arange((ep_start_ptr + ep_len) % self.size)])
+            idxs = np.concatenate([idxs, np.arange((ep_start_ptr + ep_len) % self.size)])
 
         return dict(obs=self.obs_buf[idxs],
                     obs2=self.obs2_buf[idxs],
