@@ -16,6 +16,7 @@ from spinup.algos.pytorch.ddpg_her.ddpg_her import ddpg_her as ddpg_her_pytorch
 from spinup.algos.pytorch.ppo.ppo import ppo as ppo_pytorch
 from spinup.algos.pytorch.sac.sac import sac as sac_pytorch
 from spinup.algos.pytorch.td3.td3 import td3 as td3_pytorch
+from spinup.algos.pytorch.td3_her.td3_her import td3_her as td3_her_pytorch
 from spinup.algos.pytorch.trpo.trpo import trpo as trpo_pytorch
 from spinup.algos.pytorch.vpg.vpg import vpg as vpg_pytorch
 
